@@ -8,7 +8,7 @@ A video of the mosaic process is below:
 ### Installation
 This project was developed and tested using Python 2.7.10 on Ubuntu 15.10. It depends on NumPy 1.8.2 and OpenCV 2.4.11. Install and execute this project using the following commands:
 
-    git clone https://github.com/alexhagiopol/orthomosaic.git
+    git clone https://github.com/Xiation/orthomosaic_generation.git
     cd orthomosaic
     mkdir results  # location where program places results
     mkdir datasets  # location where you place input data
