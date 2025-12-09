@@ -1,11 +1,17 @@
 import cv2
 import numpy as np
-import utilities as util
-import src.geometry as gm
+import sys
+import os
+
+
+sys.path.insert(0, os.path.dirname(__file__))
+
+from . import utilities as util
+import geometry as gm
 import copy
 
 class Combiner:
-    def __init__(self,imageList_,dataMatrix_):
+    def __init__(self,imageList_,dataMatrix_, output="output"):
         '''
         :param imageList_: List of all images in dataset.
         :param dataMatrix_: Matrix with all pose data in dataset.
@@ -13,11 +19,13 @@ class Combiner:
         '''
         self.imageList = []
         self.dataMatrix = dataMatrix_
-        self.output_dir = "output/"
+        self.output_dir = output
         
+        os.makedirs(self.output_dir, exist_ok=True)
+
         detector = cv2.ORB()
         for i in range(0,len(imageList_)):
-            image = imageList_[i][::2,::2,:] #downsample the image to speed things up. 4000x3000 is huge!
+            image = imageList_[i][::4,::4,:] #downsample the image to speed things up. 4000x3000 is huge!
             M = gm.computeUnRotMatrix(self.dataMatrix[i,:])
             #Perform a perspective transformation based on pose information.
             #Ideally, this will mnake each image look as if it's viewed from the top.
@@ -25,6 +33,7 @@ class Combiner:
             correctedImage = gm.warpPerspectiveWithPadding(image,M)
             self.imageList.append(correctedImage) #store only corrected images to use in combination
         self.resultImage = self.imageList[0]
+        
     def createMosaic(self):
         for i in range(1,len(self.imageList)):
             print(f"stitching image {i} of {len(self.imageList)-1}")
@@ -55,6 +64,11 @@ class Combiner:
         gray2 = cv2.cvtColor(image2,cv2.COLOR_BGR2GRAY)
         ret2, mask2 = cv2.threshold(gray2,1,255,cv2.THRESH_BINARY)
         kp2, descriptors2 = detector.detectAndCompute(gray2,mask2)
+        
+        # Check if descriptors were found
+        if descriptors1 is None or descriptors2 is None:
+            print(f"⚠️  Warning: No features detected in image pair {index2-1}-{index2}. Skipping.")
+            return self.resultImage
 
         #Visualize matching procedure.
         keypoints1Im = cv2.drawKeypoints(image1,kp1, None,color=(0,0,255))
@@ -66,10 +80,17 @@ class Combiner:
         matches = matcher.knnMatch(descriptors2,descriptors1, k=2) #find pairs of nearest matches
         #prune bad matches
         good = []
-        for m,n in matches:
-            if m.distance < 0.55*n.distance:
-                good.append(m)
+        for match_pair in matches:
+            if len(match_pair) == 2:
+                m, n = match_pair
+                if m.distance < 0.55*n.distance:
+                    good.append(m)
         matches = copy.copy(good)
+        
+        # Check if we have enough matches
+        if len(matches) < 4:  # Need at least 4 points for affine/homography
+            print(f"⚠️  Warning: Only {len(matches)} matches found for image pair {index2-1}-{index2}. Need at least 4. Skipping.")
+            return self.resultImage
 
         #Visualize matches
         # matchDrawing = util.drawMatches(gray2,kp2,gray1,kp1,matches)
@@ -79,6 +100,11 @@ class Combiner:
         src_pts = np.float32([ kp2[m.queryIdx].pt for m in matches ]).reshape(-1,1,2)
         dst_pts = np.float32([ kp1[m.trainIdx].pt for m in matches ]).reshape(-1,1,2)
 
+        # Validate point counts match
+        if len(src_pts) != len(dst_pts) or len(src_pts) < 4:
+            print(f"⚠️  Warning: Point count mismatch or insufficient points. Skipping image {index2}.")
+            return self.resultImage
+        
         '''
         Compute Affine Transform
         Idea: Because we corrected for camera orientation, an affine transformation *should* be enough to align the images
@@ -86,6 +112,9 @@ class Combiner:
         A, _ = cv2.estimateAffinePartial2D(src_pts,dst_pts) #false because we only want 5 DOF. we removed 3 DOF when we unrotated
         if A is None: #RANSAC sometimes fails in estimateRigidTransform(). If so, try full homography. OpenCV RANSAC implementation for homography is more robust.
             HomogResult = cv2.findHomography(src_pts,dst_pts,method=cv2.RANSAC)
+            if HomogResult[0] is None or HomogResult[0] is None:
+                print(f"⚠️  Warning: Could not compute transformation for image {index2}. Skipping.")
+                return self.resultImage
             H = HomogResult[0]
 
         '''
@@ -139,7 +168,7 @@ class Combiner:
         # util.display("result",result)
         
         # save intermediate results
-        intermediate_result_path = f"{self.output_dir}intermediateResult_{index2}.png"
+        intermediate_result_path = os.path.join(self.output_dir, f"intermediateResult_{index2}.png")
         cv2.imwrite(intermediate_result_path, result)
         print(f"Intermediate result saved: {intermediate_result_path}")
 

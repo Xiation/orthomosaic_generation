@@ -30,3 +30,14 @@ flake8>=4.0.0          # Code quality
 exifread>=3.5.1       # For handling EXIF data in images
 
 scipy>=1.7.0           # Scientific computing utilities
+
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+websockets>=11.0.3
+
+pydantic>=2.0.0
+pytest==7.4.3
+httpx==0.25.2
+
+watchdog>=3.0.0
