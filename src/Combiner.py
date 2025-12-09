@@ -25,14 +25,27 @@ class Combiner:
 
         detector = cv2.ORB()
         for i in range(0,len(imageList_)):
-            image = imageList_[i][::4,::4,:] #downsample the image to speed things up. 4000x3000 is huge!
+            
+            # originally [::2, ::2, :]
+            image = imageList_[i][::6,::6,:] # downsample the image to speed things up. 4000x3000 is huge!
             M = gm.computeUnRotMatrix(self.dataMatrix[i,:])
-            #Perform a perspective transformation based on pose information.
-            #Ideally, this will mnake each image look as if it's viewed from the top.
-            #We assume the ground plane is perfectly flat.
             correctedImage = gm.warpPerspectiveWithPadding(image,M)
-            self.imageList.append(correctedImage) #store only corrected images to use in combination
+            self.imageList.append(correctedImage) # store only corrected images to use in combination
+
+            # clear source image from memory immediately to save RAM
+            imageList_[i] = None
+            # periodic garbage collection to free up memory
+            if (i + 1) % 5 == 0:
+                import gc
+                gc.collect()
+                print(f"[COMBINER] Processed {i + 1}/{len(imageList_)} images")
+            
         self.resultImage = self.imageList[0]
+        
+        # final cleanup
+        del imageList_
+        import gc
+        gc.collect()
         
     def createMosaic(self):
         for i in range(1,len(self.imageList)):
