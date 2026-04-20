@@ -52,7 +52,7 @@ def main():
             frame_counter += 1
             print(f"[CLIENT] Sent frame {frame_counter}, size: {length} bytes")
             
-            time.sleep(0.1)  # delay kecil untuk menghindari overload
+            time.sleep(0.3)  # delay kecil untuk menghindari overload
     
     finally:
         print("[CLIENT] Closing connection.")

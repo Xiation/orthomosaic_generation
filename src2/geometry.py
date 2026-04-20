@@ -1,142 +1,55 @@
 import numpy as np
 import cv2
 import math as m
-from scipy.spatial.transform import Rotation as Rot
 
 def computeUnRotMatrix(pose):
     '''
-    Compute a rotation matrix to correct for camera orientation.
-    Enhanced to handle different coordinate systems and error checking.
-    :param pose: A 1x6 NumPy ndArray containing pose information in [X,Y,Z,Yaw,Pitch,Roll] format
-    :return: A 3x3 rotation matrix
+    See http://planning.cs.uiuc.edu/node102.html. Undoes the rotation of the craft relative to the world frame.
+    :param pose: A 1x6 NumPy ndArray containing pose information in [X,Y,Z,Y,P,R] format
+    :return: A 3x3 rotation matrix that removes perspective distortion from the image to which it is applied.
     '''
-    
-    if pose is None or len(pose) < 6:
-        raise ValueError("Pose must be a 1x6 array containing [X,Y,Z,Yaw,Pitch,Roll].")
-    
-    yaw = pose[3] * np.pi / 180 # alpha - rotation around Z axis
-    pitch = pose[4] * np.pi / 180 # beta - rotation around Y axis
-    roll = pose[5] * np.pi / 180 # gamma - rotation around X axis
+    a = pose[3]*np.pi/180 #alpha
+    b = pose[4]*np.pi/180 #beta
+    g = pose[5]*np.pi/180 #gamma
+    #Compute R matrix according to source.
+    Rz = np.array(([m.cos(a), -1*m.sin(a),    0],
+                   [m.sin(a),    m.cos(a),    0],
+                   [       0,           0,     1]))
 
-    # option 1: Using scipy for rotation matrix computation
-    try:
-        rot = Rot.from_euler('zyx', [yaw, pitch, roll])
-        rotation_matrix = rot.as_matrix()
-        
-        # For orthophoto generation, we only want to correct for roll and pitch
-        # but keep yaw information as it indicates the heading 
-        
-        rotation_matrix[0, 2] = 0
-        rotation_matrix[1, 2] = 0
-        rotation_matrix[2, 2] = 1
+    Ry = np.array(([ m.cos(b),           0,     m.sin(b)],
+                   [        0,           1,            0],
+                   [-1*m.sin(b),           0,     m.cos(b)]))
 
-        # return inverse matrix to undo the rotation
-        return np.linalg.inv(rotation_matrix)
-    except:
-        #  option 2: Manual computation if scipy fails
-        Rz = np.array([
-            [m.cos(yaw), -m.sin(yaw), 0],
-            [m.sin(yaw), m.cos(yaw), 0],
-            [0, 0, 1]
-        ])
+    Rx = np.array(([        1,           0,            0],
+                   [        0,    m.cos(g),  -1*m.sin(g)],
+                   [        0,    m.sin(g),     m.cos(g)]))
+    Ryx = np.dot(Rx,Ry)
+    R = np.dot(Rz,Ryx) #Care to perform rotations in roll, pitch, yaw order.
+    R[0,2] = 0
+    R[1,2] = 0
+    R[2,2] = 1
+    Rtrans = R.transpose()
+    InvR = np.linalg.inv(Rtrans)
+    #Return inverse of R matrix so that when applied, the transformation undoes R.
+    return InvR
 
-        Ry = np.array([
-            [m.cos(pitch), 0, m.sin(pitch)],
-            [0, 1, 0],
-            [-m.sin(pitch), 0, m.cos(pitch)]
-        ])
-
-        Rx = np.array([
-            [1, 0, 0],
-            [0, m.cos(roll), -m.sin(roll)],
-            [0, m.sin(roll), m.cos(roll)]
-        ])
-
-        # Combine rotations - order is important: first roll, then pitch, then yaw
-        R = Rz @ Ry @ Rx
-
-        # For orthophoto generation, we only want to correct for roll and pitch
-        R[0, 2] = 0
-        R[1, 2] = 0
-        R[2, 2] = 1
-
-        # Return inverse to undo the rotation
-        return np.linalg.inv(R)
-    
-def warpPerspectiveWithPadding(image, transformation):
+def warpPerspectiveWithPadding(image,transformation):
     '''
-    Applies perspective transformation with padding to ensure the entire transformed image is visible.
+    When we warp an image, its corners may be outside of the bounds of the original image. This function creates a new image that ensures this won't happen.
     :param image: ndArray image
-    :param transformation: 3x3 ndArray representing perspective transformation
+    :param transformation: 3x3 ndArray representing perspective trransformation
+    :param kp: keypoints associated with image
     :return: transformed image
     '''
-    
-    # handle invalid inputs
-    if image is None or transformation is None:
-        return image
-    
-    # get image dimensions 
-    height, width = image.shape[:2]
-    
-    # define the four corners of the image
-    corners = np.float32([[0, 0], [0, height], [width, height], [width, 0]]).reshape(-1, 1, 2)
-    
-    try:
-        warpedCorners = cv2.perspectiveTransform(corners, transformation)
-    except Exception as e:
-        print(f"Error occurred during perspective transformation: {e}")
-        return image
-    
-    # Find min/max coordinates to determine new image size
-    [xMin, yMin] = np.int32(warpedCorners.min(axis=0).ravel() - 0.5)
+
+    height = image.shape[0]
+    width = image.shape[1]
+    corners = np.float32([[0,0],[0,height],[width,height],[width,0]]).reshape(-1,1,2) #original corner locations
+
+    warpedCorners = cv2.perspectiveTransform(corners, transformation) #warped corner locations
+    [xMin, yMin] = np.int32(warpedCorners.min(axis=0).ravel() - 0.5) #new dimensions
     [xMax, yMax] = np.int32(warpedCorners.max(axis=0).ravel() + 0.5)
-
-    # Create translation matrix to move to positive coordinates
-    translation = np.array([
-        [1, 0, -xMin],
-        [0, 1, -yMin],
-        [0, 0, 1]
-    ])
-
-    # Combine transformations
-    fullTransformation = translation @ transformation
-
-    # Apply transformation
-    result = cv2.warpPerspective(image, fullTransformation, (xMax - xMin, yMax - yMin))
-
+    translation = np.array(([1,0,-1*xMin],[0,1,-1*yMin],[0,0,1])) #must translate image so that all of it is visible
+    fullTransformation = np.dot(translation,transformation) #compose warp and translation in correct order
+    result = cv2.warpPerspective(image, fullTransformation, (xMax-xMin, yMax-yMin))
     return result
-
-def gps_to_local_coords(gps_points, reference_point=None):
-    '''
-    Convert GPS coordinates to local Cartesian coordinates.
-    :param gps_points: List of (lat, lon, alt) tuples
-    :param reference_point: Reference (lat, lon, alt) tuple. If None, uses the first point.
-    :return: NumPy array of (x, y, z) coordinates in meters
-    '''
-    
-    if not gps_points:
-        return np.array([])
-    
-    # if no reference point is provided, use the first GPS point
-    if reference_point is None:
-        reference_point = gps_points[0]
-        
-    ref_lat, ref_lon, ref_alt = reference_point
-    
-    # earth radius in meters
-    earth_radius  = 6378137.0
-    
-    # convert to local coordinates 
-    coords = []
-    for lat, lon, alt in gps_points:
-        d_lat = np.radians(lat - ref_lat)
-        d_lon = np.radians(lon - ref_lon)
-        
-        x = d_lon * earth_radius * np.cos(np.radians(ref_lat))
-        y = d_lat * earth_radius
-        z = alt - ref_alt
-        
-        coords.append((x, y, z))
-
-    return np.array(coords)
-
