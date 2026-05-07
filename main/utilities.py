@@ -5,9 +5,6 @@ import os
 import sys
 from PIL.ExifTags import TAGS, GPSTAGS
 import exifread
-import redundant_filter
-from geopy.distance import geodesic
-
 
 # with PIL    
 def extract_gps_data_PIL(image_path):
@@ -115,20 +112,6 @@ def extract_gps_data_dict(image_path):
         return gps_data
     else:
         return None
-
-# filter by gps 
-def redundancy_filter(gps_data_list, threshold=1.0):
-    redundant_indices = set()
-    for i in range(len(gps_data_list)):
-        for j in range(i + 1, len(gps_data_list)):
-            if i in redundant_indices or j in redundant_indices:
-                continue  # Skip already marked redundant pairs
-            coord_i = (gps_data_list[i]['latitude'], gps_data_list[i]['longitude'])
-            coord_j = (gps_data_list[j]['latitude'], gps_data_list[j]['longitude'])
-            distance = geodesic(coord_i, coord_j).meters
-            if distance < threshold:
-                redundant_indices.add(j)  # Mark the second image as redundant
-    return redundant_indices
     
 # legacy code for importing data from text files. Not used in current implementation.
 # def importData(fileName, imageDirectory):
